@@ -1,0 +1,2 @@
+QDxgiVSyncService not destroyed in time
+^C

@@ -71,6 +71,15 @@ Window {
 
     property int thinkDots: 0
 
+    // --------------------------------------------------------
+    // Safe reference to the C++ backend (context property).
+    // Using a root-level alias avoids scoping issues inside
+    // Repeater delegates.
+    // --------------------------------------------------------
+    readonly property var backend: (typeof maxBackend !== "undefined")
+                                  ? maxBackend
+                                  : null
+
 
     // ========================================================
     // SMOOTHED MOUSE TRACKING
@@ -1040,7 +1049,6 @@ Window {
     // NAMED ANIMATION PLAYER (called from backend)
     // ========================================================
     function playNamedAnimation(name) {
-        // If something is already playing, restart it
         if (root.advancedBusy) {
             root.advancedBusy = false
         }
@@ -1076,10 +1084,10 @@ Window {
     // BACKEND HOOK
     // ========================================================
     Connections {
-        target: maxBackend
+        target: root.backend
 
         function onStateChanged() {
-            root.updateState(maxBackend.state)
+            if (root.backend) root.updateState(root.backend.state)
         }
 
         function onMoveToTopRightRequested() {
@@ -1088,8 +1096,7 @@ Window {
 
         function onToggleVisibilityRequested() {
             root.visible = !root.visible
-            if (root.visible)
-                root.moveToTopRight()
+            if (root.visible) root.moveToTopRight()
         }
 
         function onAnimationRequested(name) {
@@ -1285,14 +1292,10 @@ Window {
                 contextMenu.visible = false
                 return
             }
-            root.chatVisible = !root.chatVisible
-            if (root.chatVisible) {
-                maxBackend.setState("listening")
-                input.forceActiveFocus()
-            } else {
-                input.focus = false
-                maxBackend.setState("idle")
-            }
+            // Left-click → squeak + small pulse reaction
+            if (root.backend) root.backend.pokeMax()
+            root.pulse = 1.08
+            pokePulseTimer.restart()
         }
     }
 
@@ -1317,6 +1320,41 @@ Window {
             visible = true
         }
 
+        // ----------------------------------------------------
+        // handleMenuAction — defined HERE (on contextMenu) so
+        // the Repeater delegate can reach it via contextMenu.<fn>.
+        // The delegate cannot see `root`, `input`, or `backend`
+        // directly; this function runs in contextMenu's scope,
+        // which CAN see all of them via the parent chain.
+        // ----------------------------------------------------
+        function handleMenuAction(act) {
+            visible = false
+
+            if (act === "reset") {
+                root.moveToTopRight()
+            } else if (act === "togglechat") {
+                if (root.chatVisible) {
+                    root.closeChat()
+                } else {
+                    root.chatVisible = true
+                    if (root.backend) root.backend.setState("listening")
+                    input.forceActiveFocus()
+                }
+            } else if (act === "flip") {
+                if (root.backend) root.backend.playAnimation("flip")
+            } else if (act === "dance") {
+                if (root.backend) root.backend.playAnimation("dance")
+            } else if (act === "spin") {
+                if (root.backend) root.backend.playAnimation("spin360")
+            } else if (act === "sleep") {
+                if (root.backend) root.backend.setStateWithSound("sleepy")
+            } else if (act === "celebrate") {
+                if (root.backend) root.backend.setState("celebrating")
+            } else if (act === "quit") {
+                Qt.exit(0)
+            }
+        }
+
         Column {
             id: menuCol
             anchors.fill: parent
@@ -1326,7 +1364,7 @@ Window {
             Repeater {
                 model: [
                     { label: "Reset Position", act: "reset" },
-                    { label: "Open Chat",      act: "chat"  },
+                    { label: root.chatVisible ? "Close Chat" : "Open Chat", act: "togglechat" },
                     { label: "Do a Flip",      act: "flip"  },
                     { label: "Dance",          act: "dance" },
                     { label: "Spin 360",       act: "spin"  },
@@ -1356,18 +1394,7 @@ Window {
                         id: menuHover
                         anchors.fill: parent
                         hoverEnabled: true
-                        onClicked: {
-                            var act = modelData.act
-                            contextMenu.visible = false
-                            if (act === "reset")           root.moveToTopRight()
-                            else if (act === "chat")       { root.chatVisible = true; input.forceActiveFocus() }
-                            else if (act === "flip")       maxBackend.playAnimation("flip")
-                            else if (act === "dance")      maxBackend.playAnimation("dance")
-                            else if (act === "spin")       maxBackend.playAnimation("spin360")
-                            else if (act === "sleep")      maxBackend.setState("sleepy")
-                            else if (act === "celebrate")  maxBackend.setState("celebrating")
-                            else if (act === "quit")       Qt.exit(0)
-                        }
+                        onClicked: contextMenu.handleMenuAction(modelData.act)
                     }
                 }
             }
@@ -1425,9 +1452,9 @@ Window {
                         return "Thinking" + dots[root.thinkDots]
                     }
                     if (root.currentState === "listening" &&
-                        maxBackend.response.length === 0)
+                        (!root.backend || root.backend.response.length === 0))
                         return "Listening…"
-                    return maxBackend.response
+                    return root.backend ? root.backend.response : ""
                 }
                 color: "white"
                 font.pixelSize: 12
@@ -1506,9 +1533,16 @@ Window {
     function sendMessage() {
         var text = input.text.trim()
         if (text.length === 0) return
-        maxBackend.chat(text)
+        if (root.backend) root.backend.chat(text)
         input.text = ""
         root.chatVisible = true
+    }
+
+    function closeChat() {
+        root.chatVisible = false
+        input.focus = false
+        input.text = ""
+        if (root.backend) root.backend.setState("idle")
     }
 
 
@@ -1520,23 +1554,28 @@ Window {
         interval: 1000
         repeat: true
         running: true
-        onTriggered: maxBackend.refreshActiveApp()
+        onTriggered: if (root.backend) root.backend.refreshActiveApp()
     }
 
     Timer {
         id: speakTimer
         interval: 2800
         repeat: false
-        onTriggered: maxBackend.setState("happy")
+        onTriggered: if (root.backend) root.backend.setState("happy")
     }
 
     Timer {
         id: happyTimer
         interval: 1800
         repeat: false
-        onTriggered: maxBackend.setState("idle")
+        onTriggered: if (root.backend) root.backend.setState("idle")
     }
-
+    Timer {
+        id: pokePulseTimer
+        interval: 180
+        repeat: false
+        onTriggered: root.pulse = 1.0
+    }
 
     // ========================================================
     // START
