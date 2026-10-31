@@ -36,7 +36,7 @@ OLLAMA_BASE = OLLAMA_URL.rsplit("/api/", 1)[0]
 
 OLLAMA_CHAT_MODEL = os.getenv(
     "MAX_OLLAMA_MODEL",
-    "darshan-jarvis"
+    "darshan-jarvis-64k:latest"
 )
 
 # Small model used ONLY for emotion + animation classification.
@@ -44,7 +44,7 @@ OLLAMA_CHAT_MODEL = os.getenv(
 # parallel with the main reply.
 OLLAMA_CLASSIFIER_MODEL = os.getenv(
     "MAX_OLLAMA_CLASSIFIER_MODEL",
-    "darshan-jarvis"
+    "darshan-jarvis-64k:latest"
 )
 
 # How long Ollama keeps the model in VRAM after the last call.
@@ -59,6 +59,7 @@ CHAT_IDLE_UNLOAD_SECONDS = 60
 # ============================================================
 # Allowed animations / emotions
 # ============================================================
+# In ALLOWED_ANIMATIONS, add "inspect" and "boop":
 ALLOWED_ANIMATIONS = [
     "none",
     "flip",
@@ -75,6 +76,16 @@ ALLOWED_ANIMATIONS = [
     "dance",
     "celebrate",
     "attention",
+    "wave",
+    "bow",
+    "peekaboo",
+    "dizzy",
+    "shiver",
+    "heartbeat",
+    "levitate",
+    "moonwalk",
+    "inspect",
+    "boop",
 ]
 
 ALLOWED_EMOTIONS = [
@@ -85,6 +96,7 @@ ALLOWED_EMOTIONS = [
     "error",
     "sleepy",
     "listening",
+    "standby",
 ]
 
 
@@ -174,6 +186,46 @@ ANIMATION_KEYWORDS = [
     (["attention", "focus", "listen up", "look at me",
       "pay attention"],
      "attention"),
+
+    # ---- WAVE ----
+    (["wave", "say hi", "wave hello", "wave at me", "do a wave"],
+     "wave"),
+
+    # ---- BOW ----
+    (["take a bow", "bow down", "do a bow", "bow"],
+     "bow"),
+
+    # ---- PEEKABOO ----
+    (["peekaboo", "peek a boo", "hide and seek"],
+     "peekaboo"),
+
+    # ---- DIZZY ----
+    (["get dizzy", "go crazy", "dizzy", "spin crazy"],
+     "dizzy"),
+
+    # ---- SHIVER ----
+    (["shiver", "brrr", "freezing", "cold", "shake with cold"],
+     "shiver"),
+
+    # ---- HEARTBEAT ----
+    (["heartbeat", "pulse", "heart beat", "thump"],
+     "heartbeat"),
+
+    # ---- LEVITATE ----
+    (["levitate", "float high", "zen mode", "meditate", "hover"],
+     "levitate"),
+
+    # ---- MOONWALK ----
+    (["moonwalk", "moon walk", "slide back", "glide"],
+     "moonwalk"),
+    
+    # ---- COME CLOSE / INSPECT (Add inside ANIMATION_KEYWORDS) ----
+    (["come close", "come closer", "come here", "inspect", "look close"],
+     "inspect"),
+
+    # ---- CAMERA BOOP (Add inside ANIMATION_KEYWORDS) ----
+    (["boop", "nose boop", "touch screen", "bump"],
+     "boop"),
 ]
 
 
@@ -181,6 +233,11 @@ ANIMATION_KEYWORDS = [
 # Keyword → emotion quick map (no LLM for obvious cues)
 # ============================================================
 EMOTION_KEYWORDS = [
+    # Standby / Big Picture showcase
+    (["standby mode", "standby", "showcase mode", "big picture",
+      "start standby", "enter standby"],
+     "standby"),
+
     # Happy / polite
     (["thanks", "thank you", "good job", "nice work",
       "well done", "great job", "awesome", "amazing",
@@ -350,13 +407,6 @@ class MSG(ctypes.Structure):
 
 
 # ============================================================
-# Sound player — minimal test version
-# ============================================================
-# ============================================================
-# Sound player — QMediaPlayer version (MP3-safe)
-# ============================================================
-
-# ============================================================
 # Sound aliases
 # ============================================================
 # Maps an animation/emotion name to an actual sound file (minus
@@ -377,6 +427,10 @@ SOUND_ALIASES = {
     "happy":      "creatorshome-pop-cartoon-328167",
     "celebrate":  "creatorshome-pop-cartoon-328167",
     "dance":      "creatorshome-pop-cartoon-328167",
+    "peekaboo":   "creatorshome-pop-cartoon-328167",
+    "dizzy":      "creatorshome-pop-cartoon-328167",
+    "levitate":   "creatorshome-pop-cartoon-328167",
+    "moonwalk":   "creatorshome-pop-cartoon-328167",
 
     # ---- Squeaky toy: quick snappy / poking motions ----
     "nod":        "floraphonic-baby-squeak-toy-2-183912",
@@ -386,10 +440,19 @@ SOUND_ALIASES = {
     "sneeze":     "floraphonic-baby-squeak-toy-2-183912",
     "stretch":    "floraphonic-baby-squeak-toy-2-183912",
     "error":      "floraphonic-baby-squeak-toy-2-183912",
+    "wave":       "floraphonic-baby-squeak-toy-2-183912",
+    "bow":        "floraphonic-baby-squeak-toy-2-183912",
+    "shiver":     "floraphonic-baby-squeak-toy-2-183912",
+    "heartbeat":  "floraphonic-baby-squeak-toy-2-183912",
 
-    # ---- Left-click poke (we'll add the slot below) ----
+    # ---- Left-click poke ----
     "poke":       "floraphonic-baby-squeak-toy-2-183912",
+    
+    # ---- Add inside SOUND_ALIASES ----
+    "inspect":    "floraphonic-baby-squeak-toy-2-183912",
+    "boop":       "creatorshome-pop-cartoon-328167",
 }
+
 
 class SoundPlayer(QObject):
     """
@@ -454,6 +517,8 @@ class SoundPlayer(QObject):
         player, _ = entry
         player.setPosition(0)
         player.play()
+
+
 # ============================================================
 # MAX Backend
 # ============================================================
@@ -694,6 +759,7 @@ class MaxBackend(QObject):
         if kw_anim:
             print(f"[MAX] immediate keyword animation: {kw_anim}")
             self.animationRequested.emit(kw_anim)
+            self._sounds.play(kw_anim)
             self._last_animation = kw_anim
 
         active_app = self._active_app
@@ -706,8 +772,6 @@ class MaxBackend(QObject):
             daemon=True,
         ).start()
 
-    
-    
     @Slot(str)
     def setStateWithSound(self, state):
         """
@@ -715,9 +779,8 @@ class MaxBackend(QObject):
         has an entry in SOUND_ALIASES (or a file named <state>).
         """
         self._set_state(state)
-        # SoundPlayer.play() is safe to call for any name —
-        # if no file/alias exists, it logs and returns.
         self._sounds.play(state)
+
     # ========================================================
     # History
     # ========================================================
@@ -787,7 +850,7 @@ class MaxBackend(QObject):
             "You classify a desktop robot's reaction to a user message.\n"
             "\n"
             "EMOTION — one of: happy, curious, excited, speaking, error, "
-            "sleepy, listening.\n"
+            "sleepy, listening, standby.\n"
             "\n"
             "ANIMATION — pick one ONLY if the user explicitly asks for a "
             "physical gesture, OR says 'again' / 'repeat' / 'one more "
@@ -808,6 +871,14 @@ class MaxBackend(QObject):
             "  dance     - dance\n"
             "  celebrate - celebrate / victory\n"
             "  attention - turn to look\n"
+            "  wave      - wave hello / goodbye\n"
+            "  bow       - polite bow\n"
+            "  peekaboo  - hide and pop up\n"
+            "  dizzy     - spin crazy / get dizzy\n"
+            "  shiver    - tremble / cold shiver\n"
+            "  heartbeat - rhythmic pulse\n"
+            "  levitate  - float high and hover\n"
+            "  moonwalk  - slide side-to-side\n"
             "  none      - no gesture (default)\n"
             "\n"
             "Output ONLY valid JSON matching the schema."
@@ -908,11 +979,11 @@ class MaxBackend(QObject):
 
             self.setStateWithSound(emotion)
 
-
             # Only emit the animation if the keyword fast-path
             # in chat() didn't already fire it.
             if animation != "none" and not kw_anim:
                 self.animationRequested.emit(animation)
+                self._sounds.play(animation)
 
         except Exception as exc:
             self._set_error(str(exc))
